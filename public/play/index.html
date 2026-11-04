@@ -381,7 +381,7 @@ kbd { font-family: var(--f-num); font-size: 11px; background: rgba(255,255,255,0
       <div class="opt"><span class="lbl">Laps</span><div class="seg" id="optLaps"><button data-v="3">3</button><button data-v="5" aria-pressed="true">5</button><button data-v="10">10</button><button data-v="20">20</button></div></div>
       <div class="opt solo-only"><label for="optGrid">Grid slot · <span id="gridVal" class="num">P10</span></label><input id="optGrid" type="range" min="1" max="20" value="10"></div>
     </div>
-    <div class="opt"><label for="optDiff">AI difficulty · <span id="diffVal" class="num">65</span> <span id="diffName" class="diffname">Pro</span></label><input id="optDiff" type="range" min="0" max="100" step="1" value="65"><div class="diffscale"><span>0 · easy win</span><span>100 · flawless</span></div></div>
+    <div class="opt"><label for="optDiff">AI difficulty · <span id="diffVal" class="num">65</span> <span id="diffName" class="diffname">Pro</span></label><input id="optDiff" type="range" min="0" max="100" step="1" value="65"><div class="diffscale"><span>0 · tough</span><span>100 · superhuman</span></div></div>
     <div class="opt"><span class="lbl">Weather</span><div class="seg" id="optWx"><button data-v="sun" aria-pressed="true">Sunny</button><button data-v="cloud">Overcast</button><button data-v="light">Light rain</button><button data-v="storm">Storm</button><button data-v="mixed">Changeable</button></div></div>
     <div class="opt"><span class="lbl">Starting tyre</span><div class="seg" id="optTyre"><button data-v="S">Soft</button><button data-v="M" aria-pressed="true">Medium</button><button data-v="H">Hard</button><button data-v="I">Inter</button><button data-v="W">Wet</button></div></div>
     <div class="row2">
@@ -2469,7 +2469,7 @@ class Car {
     this.compound = 'M'; this.wear = 0; this.dmg = { fw: 0, rw: 0, floor: 0, sus: 0 }; this.fwingLost = false; this.wheelLost = -1;
     this.drs = false; this.drsAvail = false; this.drsZone = -1; this.drsChecked = -1; this.remote = false; this.inLane = false; this.limiter = false; this.auto = !isPlayer; this.pitReq = false; this.pit = { mode: 'none', box: null, t: 0, dur: 0, stops: 0, planLap: 99, nextComp: 'H' };
     this.lockF = false; this.lockR = false; this.spin = false; this.slip = 0; this.kerb = 0; this.onKerbSide = 0;
-    this.wheelSpin = 0; this.lineOff = 0; this.pace = 1; this.profile = null; this.profKey = '';
+    this.wheelSpin = 0; this.lineOff = 0; this.pace = 1; this.boost = 1; this.pboost = 1; this.profile = null; this.profKey = '';
     this.tc = 2; this.abs = true; this.stab = true; this.manual = false;
     this._Fyf = 0; this._Fyr = 0; this._af = 0; this._ar = 0; this.contactT = 0; this.wallT = 0; this.lastImpact = 0; this.crashT = 0; this.held = true; this.penalty = 0; this.lift = 0;
   }
@@ -2480,7 +2480,7 @@ class Car {
     let g = lerp(C.grip, C.wet, w);
     if ((this.compound === 'I' || this.compound === 'W') && w < 0.3) g *= 1 - (0.3 - w) * 0.25; // overheating on dry
     g *= 1 - 0.14 * Math.pow(this.wear, 1.6);
-    return 1.9 * g;
+    return 1.9 * g * this.boost;
   }
   physics(dt) {
     const T = Track; const sn = Math.sin(this.psi), cs = Math.cos(this.psi);
@@ -2509,7 +2509,7 @@ class Car {
     if (this.limiter) { const lim = 22.2; if (vxb > lim - 0.6) thr *= clamp((lim - vxb) / 0.6, 0, 1); }
     let Fdrive = 0;
     if (this.reverse) Fdrive = -3200 * this.brake;
-    else if (this.wheelLost < 2 || this.wheelLost < 0) { Fdrive = engineTorque(Math.min(rpm, 11500)) * ratio / WHEEL_R * 0.93 * thr + 130000 / Math.max(15, Math.abs(vxb)) * thr * 0.9 * (rpm > 7000 ? 1 : 0.4); if (rpm >= RPM_MAX) Fdrive *= 0.2; }
+    else if (this.wheelLost < 2 || this.wheelLost < 0) { Fdrive = engineTorque(Math.min(rpm, 11500)) * ratio / WHEEL_R * 0.93 * thr + 130000 / Math.max(15, Math.abs(vxb)) * thr * 0.9 * (rpm > 7000 ? 1 : 0.4); if (rpm >= RPM_MAX) Fdrive *= 0.2; Fdrive *= this.pboost; }
     if (this.retired && this.crashT > 0) Fdrive = 0;
     this.rpm = lerp(this.rpm, Math.min(RPM_MAX + 50, this.shiftT > 0 ? rpm * 0.9 : rpm + (this.wheelSpin * 2500)), 0.35);
     // brakes
@@ -2731,29 +2731,44 @@ const FX = (function () {
   return { init, puff, spark, shard, part, update, clear, get parts() { return parts; } };
 })();
 // ===================== AI + PIT CREWS + RACE CONTROL =====================
-// AI difficulty 0..100 -> grip/braking fraction of the theoretical limit. 0 is an easy win, 100 needs a near-perfect race.
+// AI difficulty 0..100. 0 is already quick; above 15 the AI gets extra grip and power, so 100 is well beyond a perfect human lap.
 function aiPace(level, slot) {
   // calibrated on lap times: 0 ≈ 20% slower than a perfect lap, 65 ≈ the old 'Pro', 100 = the ideal line
-  const KEYS = [[0, 0.66], [25, 0.82], [50, 0.90], [65, 0.94], [85, 0.975], [100, 1.0]];
+  const KEYS = [[0, 0.965], [20, 1.0], [100, 1.0]];
   const L = clamp(+level || 0, 0, 100); let top = 1;
   for (let i = 1; i < KEYS.length; i++) if (L <= KEYS[i][0]) { const [a0, v0] = KEYS[i - 1], [a1, v1] = KEYS[i]; top = v0 + (v1 - v0) * (L - a0) / (a1 - a0); break; }
   const d = L / 100; const spread = 0.0005 + (1 - d) * 0.0016;
   return clamp(top - slot * spread + (Math.random() - 0.5) * 0.006 * (1.2 - d), 0.6, 1.0);
 }
+// Above ~70 the AI also gets more grip and power than the player's car, so the top of the scale is beyond a perfect human lap.
+function aiBoost(level) { const L = clamp(+level || 0, 0, 100); const t = clamp((L - 15) / 85, 0, 1); return { t, g: 1 + AI_GRIP * Math.pow(t, 1.3), p: 1 + AI_POW * Math.pow(t, 1.5), m: 1 - 0.07 * t }; }
+let AI_GRIP = 0.46, AI_POW = 0.30;
 const AI = {
   ensureProfile(car) {
     const key = car.compound + Math.round(Env.wetness * 20) + '_' + Math.round(car.wear * 10) + (car.dmg.fw > 0.3 ? 'd' : '');
     if (car.profKey === key && car.profile) return;
     car.profKey = key;
-    const mu = car.grip() * car.pace * (1 - 0.3 * car.dmg.fw);
-    car.profile = RacingLine.profile(mu, 5.2 * (1 - 0.35 * car.dmg.floor), car.m, 0.78 * car.pace);
+    const mu = car.grip() * car.pace * (car.margin || 1) * (1 - 0.3 * car.dmg.fw);
+    let prof = RacingLine.profile(mu, 5.2 * (1 - 0.35 * car.dmg.floor), car.m, 0.78 * car.pace);
+    const bt = car.bt || 0; if (bt > 0) { // boosted cars arrive hotter: respect hairpins, then re-run the braking pass
+      const K = RacingLine.K, D = RacingLine.D, N = prof.length; prof = Float32Array.from(prof);
+      for (let i = 0; i < N; i++) {
+        if (Math.abs(K[i]) > 0.028) prof[i] *= 1 - 0.06 * bt;
+        // the racing line's own sideways swerve (chicanes, kinks) adds curvature the centreline doesn't show
+        const kl = Math.abs(K[i]) + Math.abs(D[(i + 5) % N] - 2 * D[i] + D[(i - 5 + N) % N]) / 25;
+        const den = car.m * kl - mu * 0.5 * 1.2 * 5.2; if (den > 0) prof[i] = Math.min(prof[i], (1 - 0.05 * bt) * Math.sqrt(mu * car.m * 9.81 / den));
+      }
+      const kq = 0.5 * 1.2 * 5.2, g = 9.81, ds = Track.ds; for (let q = 2 * N; q > 0; q--) { const i = q % N, v = prof[(i + 1) % N]; const dec = 0.78 * car.pace * mu * (g + kq * v * v / car.m) + 0.75 * v * v / car.m; const vm = Math.sqrt(v * v + 2 * dec * ds); if (prof[i] > vm) prof[i] = vm; }
+    }
+    car.profile = prof;
   },
   control(car, cars, dt) {
     const T = Track; this.ensureProfile(car);
     const v = Math.max(0, car.vxb); const s = car.s;
     const look = 5.5 + v * 0.42;
     const st = T.wrap(s + look);
-    let dT = RacingLine.D[T.idxOf(st)] + car.lineOff;
+    const dS = 1 - 0.14 * (car.bt || 0); // boosted cars keep a little more room to the walls
+    let dT = RacingLine.D[T.idxOf(st)] * dS + car.lineOff;
     let vt = car.profile[T.idxOf(s + Math.min(9, 1 + v * 0.13))];
     const P = T.PIT;
     // ---- pit lane logic
@@ -2814,8 +2829,9 @@ const AI = {
         }
         const lateralClear = Math.abs(ahead.d - car.d) > 2.15;
         if (!lateralClear && gap < safe + 15) vt = Math.min(vt, ov + Math.max(-6, (gap - safe) * 0.5));
+        if (gap < 30 && (Race.t < 40 || Math.abs(RacingLine.K[T.idxOf(s + 20)]) > 0.015)) vt *= Race.t < 40 ? 0.93 : 0.975; // opening-lap and in-corner caution in traffic
       } else car.lineOff *= 1 - Math.min(1, 0.6 * dt);
-      const hw = T.halfW(st) - 1.15; const base = RacingLine.D[T.idxOf(st)];
+      const hw = T.halfW(st) - 1.15; const base = RacingLine.D[T.idxOf(st)] * dS;
       car.lineOff = clamp(car.lineOff, -hw - base, hw - base);
       dT = base + car.lineOff;
       // yellow flags
@@ -3003,7 +3019,7 @@ const Race = {
     const level = cfg.aiLevel;
     for (let k = 0; k < n; k++) {
       const di = grid[k]; const car = new Car(k, Math.floor(di / 2), di, di === pDrv || di === pDrv2);
-      car.pace = car.isPlayer ? 1 : aiPace(level, k);
+      car.pace = car.isPlayer ? 1 : aiPace(level, k); if (!car.isPlayer) { const bo = aiBoost(level); car.boost = bo.g; car.pboost = bo.p; car.margin = bo.m; car.bt = bo.t; }
       const wetStart = Env.wetness > 0.55 ? (Env.wetness > 0.8 ? 'W' : 'I') : null;
       car.compound = car.isPlayer ? (cfg.tyre || 'M') : (wetStart || (k < 10 ? 'M' : (Math.random() < 0.5 ? 'S' : 'H')));
       if (car.isPlayer && wetStart && cfg.tyre === 'auto') car.compound = wetStart;
@@ -3026,7 +3042,7 @@ const Race = {
       const [key, team, drv, slot, name] = g; const isMe = key === myKey; const isAI = String(key)[0] === '#';
       const car = new Car(k, clamp(team | 0, 0, 9), clamp(drv | 0, 0, 19), isMe); car.netKey = String(key);
       if (name) { car.name = String(name).slice(0, 18); car.code = (car.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'DRV'); }
-      if (isAI) { car.pace = typeof g[5] === 'number' ? clamp(g[5], 0.6, 1) : aiPace(race.diff, slot); car.pit.planLap = typeof g[6] === 'number' ? g[6] : 999; car.netAI = true; }
+      if (isAI) { car.pace = typeof g[5] === 'number' ? clamp(g[5], 0.6, 1) : aiPace(race.diff, slot); car.pit.planLap = typeof g[6] === 'number' ? g[6] : 999; car.netAI = true; const bo = aiBoost(typeof race.diff === 'number' ? race.diff : cfg.aiLevel); car.boost = bo.g; car.pboost = bo.p; car.margin = bo.m; car.bt = bo.t; }
       else if (!isMe) { car.remote = true; car.pit.planLap = 999; }
       car.compound = isMe ? (cfg.tyre || 'M') : (wetStart || (slot < 10 ? 'M' : 'S'));
       if (isMe && wetStart && (cfg.tyre === 'S' || cfg.tyre === 'M' || cfg.tyre === 'H')) car.compound = cfg.tyre;
@@ -3866,7 +3882,7 @@ const Post = (function () {
     const teamName = () => { const t = TEAMS[cfg.team]; $('teamName').innerHTML = `${t.name}<small>${DRIVERS[cfg.team * 2][0]} · #${DRIVERS[cfg.team * 2][2]}</small>`; }; teamName();
     segInit('optMode', 'mode', null, v => { $('goLabel').textContent = v === 'race' ? 'Go to the grid' : 'Start practice'; }); $('goLabel').textContent = cfg.mode === 'race' ? 'Go to the grid' : 'Start practice';
     document.querySelectorAll('#optCircuit button').forEach(b => b.onclick = () => { cfg.circuit = b.dataset.v; saveCfg(); switchCircuit(b.dataset.v); Net.touch(); });
-    segInit('optLaps', 'laps', Number, () => Net.touch()); { const dEl = $('optDiff'); const name = v => v <= 15 ? 'ROOKIE' : v <= 40 ? 'CLUB' : v <= 65 ? 'PRO' : v <= 85 ? 'LEGEND' : 'ALIEN';
+    segInit('optLaps', 'laps', Number, () => Net.touch()); { const dEl = $('optDiff'); const name = v => v <= 20 ? 'PRO' : v <= 45 ? 'LEGEND' : v <= 75 ? 'ALIEN' : 'IMPOSSIBLE';
       const show = () => { const v = +dEl.value; $('diffVal').textContent = v; $('diffName').textContent = name(v); dEl.style.setProperty('--p', v + '%'); }; window.__showDiff = show;
       dEl.value = cfg.aiLevel; show(); dEl.oninput = () => { cfg.aiLevel = +dEl.value; show(); saveCfg(); Net.touch(); }; } segInit('optWx', 'weather', null, () => { applyWeather(true); Net.touch(); });
     segInit('optAiFill', 'aiFill', Number, () => Net.touch());
