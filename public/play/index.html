@@ -244,6 +244,9 @@ kbd { font-family: var(--f-num); font-size: 11px; background: rgba(255,255,255,0
 .p2p-row .btn, .p2p-code .btn { padding: 8px 12px; font-size: 13px; }
 .p2p-code { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--ink-3); font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .p2p-code b { font-size: 24px; color: var(--ink); letter-spacing: .14em; user-select: text; -webkit-user-select: text; }
+.perfstat { position: absolute; right: max(12px, env(safe-area-inset-right, 0px)); top: calc(208px + env(safe-area-inset-top, 0px)); font-family: var(--f-num); font-size: 11px; font-weight: 700; letter-spacing: .08em; padding: 2px 7px; background: var(--panel); color: var(--green); }
+.perfstat.meh { color: var(--amber); } .perfstat.bad { color: #ff5a5a; } .perfstat:empty { display: none; }
+@media (max-width: 760px) { .perfstat { top: auto; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); } }
 #padHint { position: fixed; left: 50%; top: calc(64px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 12; background: var(--panel-2); border-left: 3px solid var(--green); padding: 7px 12px; font-size: 13px; opacity: 0; transition: opacity .3s; pointer-events: none; }
 #padHint.show { opacity: 1; }
 
@@ -393,7 +396,7 @@ kbd { font-family: var(--f-num); font-size: 11px; background: rgba(255,255,255,0
       <div class="opt"><span class="lbl">Graphics</span><div class="seg" id="optGfx"><button data-v="0">Low</button><button data-v="1" aria-pressed="true">Medium</button><button data-v="2">Ultra</button></div></div>
       <div class="opt"><span class="lbl">Engineer voice</span><div class="seg" id="optVoice"><button data-v="1" aria-pressed="true">On</button><button data-v="0">Off</button></div></div>
     </div>
-    <div class="opt online-only"><span class="lbl">AI fill</span><div class="seg" id="optAiFill"><button data-v="1" aria-pressed="true">Fill grid to 20</button><button data-v="0">Humans only</button></div></div>
+    <div class="opt online-only"><span class="lbl">AI fill</span><div class="seg" id="optAiFill"><button data-v="2">10-car grid</button><button data-v="1">Full 20-car grid</button><button data-v="0">Humans only</button></div></div>
     <div class="menu-actions"><button class="go" id="goBtn"><span id="goLabel">Go to the grid</span><span>→</span></button><button class="padbtn" id="padBtnMenu">Controller<small id="padBtnState">Not connected</small></button></div>
     <div class="keys">
       <span><kbd>↑</kbd> <kbd>W</kbd></span><span>Throttle</span>
@@ -415,6 +418,7 @@ kbd { font-family: var(--f-num); font-size: 11px; background: rgba(255,255,255,0
 <div id="hud" hidden>
   <div id="drsBadge" class="drs" hidden><b>DRS</b><span id="drsTxt">AVAILABLE</span><i id="drsBar"></i></div>
   <div class="tower"><div class="hd"><b id="twTitle">LAP 1</b><span id="twSub">Interval</span></div><div id="twRows"></div></div>
+  <div id="perfStat" class="perfstat"></div>
   <div class="top"><div class="flag" id="flagChip"></div><div class="lap"><small>LAP</small><b id="lapNum" class="num">1/5</b></div><div class="wx"><span id="wxName">Sunny</span><b id="wxTrack">Track 0% wet</b></div></div>
   <canvas id="mini" width="380" height="380"></canvas>
   <div class="timing">
@@ -1729,6 +1733,7 @@ const Scenery = (function () {
   }
   // instanced crowd figures standing at spots [x,y,z]
   function people(ctx, spots) {
+    if (ctx.Q === 0) spots = spots.filter((_, i) => i % 2 === 0);
     const bg = new THREE.CylinderGeometry(0.2, 0.24, 1.25, 6); bg.translate(0, 0.62, 0); const hg = new THREE.SphereGeometry(0.14, 6, 5); hg.translate(0, 1.4, 0);
     const cols = ['#d0121b', '#1c2fb8', '#f4f4f4', '#222', '#ffd400', '#0b5e43', '#ff7a00', '#7a4b2a', '#3fa9f5', '#ff5fa2'];
     const b = instanced(bg, std(0xffffff, 0.8), spots, p => ({ x: p[0], y: p[1], z: p[2], ry: Math.random() * 6, c: cols[(Math.random() * cols.length) | 0] }), false);
@@ -2239,6 +2244,7 @@ const Scenery = (function () {
   return { silverstone, nyc, tokyo, tokyoPost, austinPost, mumbai, mumbaiPost, lamps };
 })();
 // ===================== CAR MODEL =====================
+const phys2std = o => { const c = Object.assign({}, o); delete c.clearcoat; delete c.clearcoatRoughness; return new THREE.MeshStandardMaterial(c); };
 const CarFactory = (function () {
   let G = null; // shared geometries
   const mats = {};
@@ -2381,19 +2387,19 @@ const CarFactory = (function () {
     if (!mats[key]) {
       const matte = teamIdx === 8;
       mats[key] = {
-        pod: new THREE.MeshPhysicalMaterial({ map: liveryPod(team), roughness: matte ? 0.65 : 0.34, metalness: 0.05, clearcoat: matte ? 0 : 0.8, clearcoatRoughness: 0.1, envMapIntensity: 0.55 }),
-        accent: new THREE.MeshPhysicalMaterial({ color: new THREE.Color(team.c2), roughness: 0.34, metalness: 0.05, clearcoat: 0.8, envMapIntensity: 0.55 }),
-        main: new THREE.MeshPhysicalMaterial({ color: new THREE.Color(team.c1), roughness: matte ? 0.65 : 0.34, metalness: 0.05, clearcoat: matte ? 0 : 0.8, envMapIntensity: 0.55 }),
+        pod: (CarFactory.low ? phys2std : (o => new THREE.MeshPhysicalMaterial(o)))({ map: liveryPod(team), roughness: matte ? 0.65 : 0.34, metalness: 0.05, clearcoat: matte ? 0 : 0.8, clearcoatRoughness: 0.1, envMapIntensity: 0.55 }),
+        accent: (CarFactory.low ? phys2std : (o => new THREE.MeshPhysicalMaterial(o)))({ color: new THREE.Color(team.c2), roughness: 0.34, metalness: 0.05, clearcoat: 0.8, envMapIntensity: 0.55 }),
+        main: (CarFactory.low ? phys2std : (o => new THREE.MeshPhysicalMaterial(o)))({ color: new THREE.Color(team.c1), roughness: matte ? 0.65 : 0.34, metalness: 0.05, clearcoat: matte ? 0 : 0.8, envMapIntensity: 0.55 }),
       };
     }
     const tm = mats[key];
-    const bodyMat = new THREE.MeshPhysicalMaterial({ map: liveryBody(team, carNo), roughness: teamIdx === 8 ? 0.65 : 0.34, metalness: 0.05, clearcoat: teamIdx === 8 ? 0 : 0.8, clearcoatRoughness: 0.1, envMapIntensity: 0.55 });
+    const bodyMat = (CarFactory.low ? phys2std : (o => new THREE.MeshPhysicalMaterial(o)))({ map: liveryBody(team, carNo), roughness: teamIdx === 8 ? 0.65 : 0.34, metalness: 0.05, clearcoat: teamIdx === 8 ? 0 : 0.8, clearcoatRoughness: 0.1, envMapIntensity: 0.55 });
     const add = (geo, mat, parent = g) => { const m = new THREE.Mesh(geo, mat); m.castShadow = true; m.receiveShadow = true; parent.add(m); return m; };
     const body = add(G.body, bodyMat); add(G.airbox, tm.main); add(G.pods, tm.pod); add(G.carbon, mats.carbon); add(G.inlet, mats.black); add(G.rim, mats.black); add(G.mirror, tm.main); add(G.rplate, tm.main);
     const fwing = new THREE.Group(); add(G.fwing, tm.accent, fwing); g.add(fwing);
     const flapPivot = new THREE.Group(); flapPivot.position.set(0, 0.95, -2.3); add(G.flap, tm.main, flapPivot); g.add(flapPivot);
     const tcam = add(G.tcam, second ? new THREE.MeshStandardMaterial({ color: 0xffd400, roughness: 0.4 }) : mats.black); tcam.position.set(0, 1.12, -0.32);
-    const helmet = add(G.helmet, new THREE.MeshPhysicalMaterial({ map: helmetTex(team, driverIdx), roughness: 0.25, clearcoat: 1 })); helmet.position.set(0, 0.79, -0.02); helmet.rotation.y = -Math.PI / 2;
+    const helmet = add(G.helmet, (CarFactory.low ? phys2std : (o => new THREE.MeshPhysicalMaterial(o)))({ map: helmetTex(team, driverIdx), roughness: 0.25, clearcoat: 1 })); helmet.position.set(0, 0.79, -0.02); helmet.rotation.y = -Math.PI / 2;
     const rainL = add(G.rainLight, mats.rain); rainL.position.set(0, 0.36, -2.43);
     // wheels
     const wheels = [], pivots = [];
@@ -2657,7 +2663,12 @@ const Collide = {
     const ca = circ(a), cb = circ(b); let best = null;
     for (const p of ca) for (const q of cb) { const ddx = p[0] - q[0], ddz = p[1] - q[1]; const d = Math.hypot(ddx, ddz); const pen = 1.92 - d; if (pen > 0 && (!best || pen > best.pen)) best = { pen, nx: ddx / (d || 1), nz: ddz / (d || 1), px: (p[0] + q[0]) / 2, pz: (p[1] + q[1]) / 2, oa: p[2], ob: q[2] }; }
     if (!best) return;
-    const { pen, nx, nz } = best; const pa = a.pinned || a.remote, pb = b.pinned || b.remote; if (pa && pb) return; const ma = pa ? 1e9 : a.m, mb = pb ? 1e9 : b.m; const wa = mb / (ma + mb), wb = ma / (ma + mb);
+    const { pen, nx, nz } = best;
+    if (a.remote || b.remote) { // online opponent: gentle push only, no damage, no bounce
+      if (a.remote && b.remote) return; const me = a.remote ? b : a, sg = a.remote ? -1 : 1; const k = Math.min(pen, 0.25) * 0.35;
+      me.x += nx * k * sg; me.z += nz * k * sg; const vn = (me.vx * nx + me.vz * nz) * sg; if (vn < 0) { me.vx -= nx * vn * sg * 0.25; me.vz -= nz * vn * sg * 0.25; } return;
+    }
+    const pa = a.pinned || a.remote, pb = b.pinned || b.remote; if (pa && pb) return; const ma = pa ? 1e9 : a.m, mb = pb ? 1e9 : b.m; const wa = mb / (ma + mb), wb = ma / (ma + mb);
     a.x += nx * pen * wa; a.z += nz * pen * wa; b.x -= nx * pen * wb; b.z -= nz * pen * wb;
     const rax = best.px - a.x, raz = best.pz - a.z, rbx = best.px - b.x, rbz = best.pz - b.z;
     const vax = a.vx + a.r * raz, vaz = a.vz - a.r * rax, vbx = b.vx + b.r * rbz, vbz = b.vz - b.r * rbx;
@@ -3015,7 +3026,7 @@ const Race = {
       const [key, team, drv, slot, name] = g; const isMe = key === myKey; const isAI = String(key)[0] === '#';
       const car = new Car(k, clamp(team | 0, 0, 9), clamp(drv | 0, 0, 19), isMe); car.netKey = String(key);
       if (name) { car.name = String(name).slice(0, 18); car.code = (car.name.replace(/[^A-Za-z0-9]/g, '').slice(0, 3).toUpperCase() || 'DRV'); }
-      if (isAI && isHost) { car.pace = aiPace(race.diff, slot); car.pit.planLap = this.laps >= 6 ? Math.round(this.laps * rand(0.35, 0.6)) : 999; }
+      if (isAI) { car.pace = typeof g[5] === 'number' ? clamp(g[5], 0.6, 1) : aiPace(race.diff, slot); car.pit.planLap = typeof g[6] === 'number' ? g[6] : 999; car.netAI = true; }
       else if (!isMe) { car.remote = true; car.pit.planLap = 999; }
       car.compound = isMe ? (cfg.tyre || 'M') : (wetStart || (slot < 10 ? 'M' : 'S'));
       if (isMe && wetStart && (cfg.tyre === 'S' || cfg.tyre === 'M' || cfg.tyre === 'H')) car.compound = cfg.tyre;
@@ -3429,27 +3440,29 @@ const Relay = (function () {
       }
       const setConn = c => { if (c === connected) return; connected = c; for (const f of connSubs) { try { f(c); } catch (e) { } } };
       const send = () => { try { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: 'p', p: myPres })); } catch (e) { } };
+      let rtt = 0, pingT = null;
       const room = {
-        code: () => code, isHub: () => hub, transport: 'relay',
+        code: () => code, isHub: () => hub, transport: 'relay', rtt: () => rtt,
         presence(patch) { myPres = Object.assign({}, myPres, patch); for (const k of Object.keys(patch)) if (patch[k] === null) delete myPres[k]; rebuild(); if (!sendT) sendT = setTimeout(() => { sendT = null; send(); }, 30); return Promise.resolve(); },
         peers: () => snap,
         onPeers(f) { peerSubs.push(f); setTimeout(() => f({ peers: snap, joined: snap, left: [], updated: [] }), 0); return () => { const i = peerSubs.indexOf(f); if (i >= 0) peerSubs.splice(i, 1); }; },
         onConnection(f) { connSubs.push(f); setTimeout(() => f(connected), 0); return () => { const i = connSubs.indexOf(f); if (i >= 0) connSubs.splice(i, 1); }; },
         connected: () => connected,
-        leave() { settled = true; try { ws && ws.close(1000); } catch (e) { } setConn(false); others.clear(); rebuild(); },
+        leave() { clearInterval(pingT); settled = true; try { ws && ws.close(1000); } catch (e) { } setConn(false); others.clear(); rebuild(); },
       };
       const timer = setTimeout(() => fail('The race server did not answer. A free server can take up to a minute to wake up — try again.'), 45000);
       try { ws = new WebSocket(url()); } catch (e) { fail('Could not reach the race server.'); return; }
       ws.onopen = () => { try { ws.send(JSON.stringify({ t: 'hello', v: 1, mode, code: codeIn || '' })); } catch (e) { } };
       ws.onmessage = ev => {
         let m; try { m = JSON.parse(ev.data); } catch (e) { return; } if (!m || typeof m !== 'object') return;
-        if (m.t === 'welcome' && !connected) { clearTimeout(timer); myId = String(m.id); code = String(m.code || ''); hub = !!m.host; const now = Date.now(); for (const e of (Array.isArray(m.peers) ? m.peers : [])) if (Array.isArray(e) && typeof e[0] === 'string') others.set(e[0], { presence: Object.freeze(clean(e[1])), updatedAt: now }); settled = true; setConn(true); rebuild(); resolve(room); send(); }
+        if (m.t === 'pong' && typeof m.c === 'number') { const r = performance.now() - m.c; rtt = rtt ? rtt * 0.7 + r * 0.3 : r; return; }
+        if (m.t === 'welcome' && !connected) { pingT = setInterval(() => { try { if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'ping', c: performance.now() })); } catch (e) { } }, 2000); clearTimeout(timer); myId = String(m.id); code = String(m.code || ''); hub = !!m.host; const now = Date.now(); for (const e of (Array.isArray(m.peers) ? m.peers : [])) if (Array.isArray(e) && typeof e[0] === 'string') others.set(e[0], { presence: Object.freeze(clean(e[1])), updatedAt: now }); settled = true; setConn(true); rebuild(); resolve(room); send(); }
         else if (m.t === 'err') fail(String(m.msg || 'Could not join that room.'));
         else if (m.t === 'p' && typeof m.id === 'string') { others.set(m.id, { presence: Object.freeze(clean(m.p)), updatedAt: Date.now() }); rebuild(); }
         else if (m.t === 'leave' && typeof m.id === 'string') { if (others.delete(m.id)) rebuild(); }
       };
       ws.onerror = () => { };
-      ws.onclose = () => { if (!settled) fail('Could not connect to the race server.'); setConn(false); others.clear(); rebuild(); };
+      ws.onclose = () => { clearInterval(pingT); if (!settled) fail('Could not connect to the race server.'); setConn(false); others.clear(); rebuild(); };
     });
   }
   return { available, create, url };
@@ -3624,9 +3637,9 @@ const Post = (function () {
 (function () {
   const $ = id => document.getElementById(id);
   const canvas = $('gl');
-  let carLight = null;
+  let carLight = null, aaBoot = true;
   let renderer, scene, camera, sun, hemi, sky, skyMat, skyScene, pmrem, envRT, rain, raceLineMesh, worldRoot = null;
-  const cfg = { circuit: 'monaco', aiFill: 1, players: 1, mode: 'race', team: 0, laps: 5, grid: 10, aiLevel: 65, weather: 'sun', tyre: 'M', manual: false, tc: 2, abs: true, stab: true, line: true, gfx: 1, voice: 1 };
+  const cfg = { circuit: 'monaco', aiFill: 2, players: 1, mode: 'race', team: 0, laps: 5, grid: 10, aiLevel: 65, weather: 'sun', tyre: 'M', manual: false, tc: 2, abs: true, stab: true, line: true, gfx: 1, voice: 1 };
   let saved = null; try { saved = localStorage.getItem('apexRiviera'); Object.assign(cfg, JSON.parse(saved || '{}')); } catch (e) { }
   // first run on a Chromebook or other low-power machine: start on Low graphics
   const lowEnd = /CrOS/.test(navigator.userAgent) || (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 4;
@@ -3671,7 +3684,7 @@ const Post = (function () {
 
   async function boot() {
     await step('Warming up the renderer', 5);
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    aaBoot = cfg.gfx > 0; renderer = new THREE.WebGLRenderer({ canvas, antialias: aaBoot, powerPreference: 'high-performance' }); CarFactory.low = cfg.gfx === 0;
     renderer.outputEncoding = THREE.sRGBEncoding; renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
     renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap; renderer.physicallyCorrectLights = false;
     scene = new THREE.Scene();
@@ -3759,18 +3772,20 @@ const Post = (function () {
   const usePost = () => Post.ok && cfg.gfx >= 1 && !postOff;
   // automatic performance: render resolution drops (then the post effects switch off) if the frame rate sags, and recovers when there's headroom
   let rScale = lowEnd ? 0.85 : 1, postOff = false; const perf = { t: 0, n: 0, good: 0, frame: 0 };
+  let fpsT = 0, fpsN = 0, fpsShow = 0;
   function perfTick(rawDt) {
+    fpsT += rawDt; fpsN++; if (fpsT >= 0.5) { fpsShow = Math.round(fpsN / fpsT); fpsT = 0; fpsN = 0; const el = $('perfStat'); if (el && !$('hud').hidden) { const ping = Net.ping(); el.textContent = fpsShow + ' FPS' + (Race.net ? ' · ' + (ping ? Math.round(ping) + ' ms' : 'online') : ''); el.className = 'perfstat' + (fpsShow < 40 || ping > 150 ? ' bad' : fpsShow < 55 || ping > 90 ? ' meh' : ''); } }
     perf.t += rawDt; perf.n++; perf.frame++;
-    if (cfg.gfx === 0) { renderer.shadowMap.autoUpdate = false; if (perf.frame % 2 === 0) renderer.shadowMap.needsUpdate = true; } else renderer.shadowMap.autoUpdate = true;
+    renderer.shadowMap.autoUpdate = true;
     if (perf.t < 2.5) return; const fps = perf.n / perf.t; perf.t = 0; perf.n = 0;
     if (Race.state === 'menu' || paused || document.hidden) return;
     if (fps < 45) { perf.good = 0; if (rScale > 0.6) { rScale = Math.max(0.55, +(rScale - 0.12).toFixed(2)); applyGfx(); } else if (usePost()) { postOff = true; } }
     else if (fps > 58) { if (++perf.good >= 3 && rScale < 1) { perf.good = 0; rScale = Math.min(1, +(rScale + 0.1).toFixed(2)); applyGfx(); } }
   }
   function applyGfx() {
-    const q = cfg.gfx; camera.far = q === 0 ? 2400 : 5000; camera.updateProjectionMatrix(); renderer.setPixelRatio(Math.min(devicePixelRatio, q === 2 ? 2 : q === 1 ? 1.5 : 1) * rScale);
+    const q = cfg.gfx; camera.far = q === 0 ? 2400 : 5000; camera.updateProjectionMatrix(); renderer.setPixelRatio(Math.min(devicePixelRatio, q === 2 ? 2 : q === 1 ? 1.5 : 0.85) * rScale);
     const sz = q === 2 ? 4096 : q === 1 ? 2048 : 1024; if (sun.shadow.mapSize.x !== sz) { sun.shadow.mapSize.set(sz, sz); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
-    renderer.shadowMap.enabled = true; World.terrain.receiveShadow = q > 0; resize(); Post.U.grain = q >= 2 ? 0.03 : 0.022;
+    renderer.shadowMap.enabled = q > 0; World.terrain.receiveShadow = q > 0; resize(); Post.U.grain = q >= 2 ? 0.03 : 0.022;
   }
 
   // ---------- rain ----------
@@ -3862,7 +3877,7 @@ const Post = (function () {
     segInit('optTyre', 'tyre'); segInit('optBox', 'manual', v => v === 'manual'); segInit('optTc', 'tc', Number);
     segInit('optAssist', 'assist', null, v => { cfg.abs = v !== 'off'; cfg.stab = v === 'full'; saveCfg(); });
     if (!cfg.assist) cfg.assist = 'full';
-    segInit('optLine', 'line', v => v === '1'); segInit('optGfx', 'gfx', Number, () => { rScale = 1; postOff = false; applyGfx(); });
+    segInit('optLine', 'line', v => v === '1'); segInit('optGfx', 'gfx', Number, v => { rScale = 1; postOff = false; if ((v > 0) !== aaBoot) { saveCfg(); location.reload(); return; } applyGfx(); });
     segInit('optCam', 'cam', Number, v => { camMode = v; });
     const g = $('optGrid'); g.value = cfg.grid; $('gridVal').textContent = 'P' + cfg.grid; g.oninput = () => { cfg.grid = +g.value; $('gridVal').textContent = 'P' + cfg.grid; saveCfg(); };
     $('goBtn').onclick = () => { if (menuMode === 'online') Net.start(); else startSession(); };
@@ -4487,7 +4502,7 @@ const Post = (function () {
     const t0 = Date.now();
     let nick = ''; try { nick = (localStorage.getItem('apexNick') || '').slice(0, 18); } catch (e) { }
     if (!nick) nick = 'Driver ' + (100 + Math.floor(Math.random() * 900));
-    let lobbyT = 0;
+    let lobbyT = 0, aiTick = 0;
     let race = null, offset = null, pubT = 0, lobT = 0, dirty = true, lastHost = null, joining = false, lastHostCirc = '';
     const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
     const COMP = 'SMHIW';
@@ -4552,6 +4567,21 @@ const Post = (function () {
       if (c.retired) { c.retireT = (c.retireT || 0) + dt; if (c.retireT > 8) c.model.group.visible = false; }
     }
     const ghost = key => Race.cars.find(c => c.remote && c.netKey === key);
+    let lastAiAt = 0;
+    // every computer simulates the AI field itself; the host's copy is the reference and drift is blended out gently
+    function correctAI(c, a, recvAt, sentAt, key) {
+      if (!Array.isArray(a) || a.length < 16 || !a.slice(0, 16).every(v => typeof v === 'number' && isFinite(v))) return;
+      const off = clockFor(key, sentAt, recvAt || Date.now()); const age = clamp((Date.now() - off - sentAt) / 1000, 0, 0.6);
+      const px = a[0] + a[4] * age, pz = a[1] + a[5] * age; const f = a[9]; const err = Math.hypot(px - c.x, pz - c.z);
+      if (c.pinned || c.lift > 0.5) return;
+      if (err > 25) { c.x = px; c.z = pz; c.psi = a[3]; c.vx = a[4]; c.vz = a[5]; c.r = a[15]; c.corr = null; }
+      else if (err > 0.8) c.corr = { x: px - c.x, z: pz - c.z, left: 0.5 };
+      let dp = a[3] - c.psi; while (dp > Math.PI) dp -= 2 * Math.PI; while (dp < -Math.PI) dp += 2 * Math.PI; if (Math.abs(dp) > 0.6) c.psi = a[3];
+      if ((f & 32) && !c.retired) { c.retired = true; c.retireT = 0; c.dnfReason = 'Accident'; }
+      if ((f & 64) && !c.finished) { c.finished = true; c.finishTime = a[13]; Race.finishedOrder.push(c); if (!Race.chequered) { Race.chequered = true; if (Race.onChequer) Race.onChequer(c); } }
+      c.lap = Math.max(c.lap, a[10] | 0); if (a[14]) c.bestLap = a[14];
+    }
+    function applyCorrections(dt) { for (const c of Race.cars) { const k = c.corr; if (!k) continue; const u = Math.min(1, dt / k.left); c.x += k.x * u; c.z += k.z * u; k.x *= 1 - u; k.z *= 1 - u; k.left -= dt; if (k.left <= 0.02) c.corr = null; } }
     function publish() {
       if (!ok || !room) return;
       const host = isHost();
@@ -4559,7 +4589,7 @@ const Post = (function () {
       P.cfg = host ? { circuit: cfg.circuit, laps: cfg.laps, weather: cfg.weather, diff: cfg.aiLevel, ai: cfg.aiFill } : null;
       P.race = host && race && race.host === myKey() ? race : null;
       P.car = Race.net && Race.player ? enc(Race.player) : null;
-      P.ai = host && Race.net ? Race.cars.filter(c => c.netKey && c.netKey[0] === '#' && !c.remote).map(c => [c.netKey, ...enc(c)]) : null;
+      P.ai = host && Race.net && (aiTick++ % 5 === 0) ? Race.cars.filter(c => c.netKey && c.netKey[0] === '#').map(c => [c.netKey, ...enc(c)]) : null;
       room.presence(P).catch(() => { });
     }
     async function joinRace(r) {
@@ -4579,16 +4609,16 @@ const Post = (function () {
       const used = new Set(); const humans = [];
       for (const p of ds) { const team = clamp(p.presence.team | 0, 0, 9); let drv = team * 2; if (used.has(drv)) drv = team * 2 + 1; if (used.has(drv)) { drv = [...Array(20).keys()].find(i => !used.has(i)); } used.add(drv); humans.push([p.peer, Math.floor(drv / 2), drv, 0, nameOf(p).slice(0, 18)]); }
       const ais = [];
-      if (cfg.aiFill) { const pool = [...Array(20).keys()].filter(i => !used.has(i)).map(i => ({ i, a: 1 - Math.floor(i / 2) * 0.012 + Math.random() * 0.03 })).sort((a, b) => b.a - a.a); for (const { i } of pool) { if (humans.length + ais.length >= 20) break; ais.push(['#' + ais.length, Math.floor(i / 2), i, 0]); } }
+      const gridMax = cfg.aiFill === 2 ? 10 : 20; if (cfg.aiFill) { const pool = [...Array(20).keys()].filter(i => !used.has(i)).map(i => ({ i, a: 1 - Math.floor(i / 2) * 0.012 + Math.random() * 0.03 })).sort((a, b) => b.a - a.a); for (const { i } of pool) { if (humans.length + ais.length >= gridMax) break; ais.push(['#' + ais.length, Math.floor(i / 2), i, 0]); } }
       // humans start in the middle of the AI field, shuffled
       const hs = humans.sort(() => Math.random() - 0.5); const order = ais.slice(); order.splice(Math.min(Math.floor(ais.length * 0.45), order.length), 0, ...hs);
-      order.forEach((g, k) => g[3] = k);
+      order.forEach((g, k) => { g[3] = k; if (String(g[0])[0] === '#') { g[4] = ''; g[5] = +aiPace(cfg.aiLevel, k).toFixed(4); g[6] = cfg.laps >= 6 ? Math.round(cfg.laps * rand(0.35, 0.6)) : 999; } });
       const now = Date.now(); const w0 = rand(60, 160);
       race = { rid: Math.random().toString(36).slice(2, 8), host: myKey(), circuit: cfg.circuit, laps: cfg.laps, weather: cfg.weather, diff: cfg.aiLevel, lightsAt: now + 9000, outAt: now + 13600 + Math.round(Math.random() * 2200), grid: order, wx: [Math.round(w0), Math.round(w0 + rand(150, 320))] };
       offset = 0; dirty = true; publish(); joinRace(race);
     }
     function adoptHost() {
-      Race.cars.forEach((c, k) => { if (c.remote && c.netKey && c.netKey[0] === '#') { c.remote = false; c.auto = true; c.held = false; c.pinned = false; c.pace = aiPace(race ? race.diff : 60, k); c.armed = c.s > Track.L * 0.3; c.lapStart = Race.t; c.profKey = ''; c.pit.mode = 'none'; } });
+      Race.cars.forEach((c, k) => { if (c.remote && c.netKey && c.netKey[0] === '#') { c.remote = false; c.auto = true; c.held = false; c.pinned = false; c.armed = c.s > Track.L * 0.3; c.lapStart = Race.t; c.profKey = ''; c.pit.mode = 'none'; } });
       race = Object.assign({}, race, { host: myKey() }); dirty = true;
       if (Race.player) radio('The host left. You are now running the race for everyone.', 'RACE CONTROL', 2);
     }
@@ -4638,7 +4668,7 @@ const Post = (function () {
       else { const live = ds.some(p => p.presence.st === 'race' && !(p.isMe && p.sameTab));
         if (live && !Race.net) note = `A race is running. You'll be on the grid for the next one.`;
         else if (isHost()) note = ds.length > 1 ? 'You’re the host. Everyone races on your circuit, laps, weather and AI settings.' : `Room ${room.code()} is open. Copy the invite link and send it — anyone who opens it joins this room.`;
-        else { const hc = h && h.presence.cfg; note = `Waiting for ${nameOf(h)} to start.` + (hc && CIRCUITS[hc.circuit] ? ` ${CIRCUITS[hc.circuit].short} · ${hc.laps} laps · ${WX[hc.weather] ? WX[hc.weather].name : ''}${hc.ai ? ' · AI fill' : ''}.` : ''); } }
+        else { const hc = h && h.presence.cfg; note = `Waiting for ${nameOf(h)} to start.` + (hc && CIRCUITS[hc.circuit] ? ` ${CIRCUITS[hc.circuit].short} · ${hc.laps} laps · ${WX[hc.weather] ? WX[hc.weather].name : ''}${hc.ai === 2 ? ' · 10-car grid' : hc.ai ? ' · full grid' : ' · humans only'}.` : ''); } }
       $('lobNote').textContent = note;
       if (menuMode === 'online') updateGo();
     }
@@ -4673,12 +4703,13 @@ const Post = (function () {
           const r = hp.race && typeof hp.race === 'object' && Array.isArray(hp.race.grid) ? hp.race : null;
           if (r && (!race || r.rid !== race.rid)) { race = r; if (!Race.net && Race.state === 'menu' && toLocal(r.outAt) > Date.now() - 2000) joinRace(r); }
           else if (r) race = r; else if (!Race.net) race = null;
-          if (Race.net && Array.isArray(hp.ai)) for (const a of hp.ai) { if (!Array.isArray(a)) continue; const g = ghost(a[0]); if (g) apply(g, a.slice(1), h.updatedAt, hp.now, h.peer); }
+          if (Race.net && Array.isArray(hp.ai) && typeof hp.now === 'number' && hp.now !== lastAiAt) { lastAiAt = hp.now; for (const a of hp.ai) { if (!Array.isArray(a)) continue; const c = Race.cars.find(x => x.netKey === a[0]); if (c) correctAI(c, a.slice(1), h.updatedAt, hp.now, h.peer); } }
           mirrorHost(h);
         }
         if (hostIsMe && lastHost && lastHost !== h.peer && Race.net && race && race.host !== myKey()) adoptHost();
         lastHost = h ? h.peer : null;
         if (Race.net) {
+          applyCorrections(dt);
           const here = new Set(peers.map(p => p.peer));
           for (const p of peers) { if (p.isMe && p.sameTab) continue; const pr = p.presence; if (!pr || pr.rid !== Race.net.rid || !pr.car) continue; const g = ghost(p.peer); if (g) apply(g, pr.car, p.updatedAt, pr.now, p.peer); }
           for (const c of Race.cars) { if (!c.remote) continue; if (c.netKey[0] !== '#' && !here.has(c.netKey) && !c.retired && !c.finished) { c.retired = true; c.retireT = 0; c.dnfReason = 'Left'; if (Race.player) radio(`${c.name} has left the race.`, 'RACE CONTROL', 0); } smooth(c, dt); }
@@ -4688,7 +4719,7 @@ const Post = (function () {
       },
       touch() { dirty = true; },
       leftRace() { if (race && race.host === myKey()) race = null; dirty = true; },
-      myKey, isHost, get available() { return ok; },
+      myKey, isHost, get available() { return ok; }, ping: () => (room && room.rtt ? room.rtt() : 0),
     };
   })();
 
