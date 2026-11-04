@@ -36,6 +36,7 @@ wss.on('connection', ws => {
     if (ws.tokens < 1) return; ws.tokens -= 1;
     let m; try { m = JSON.parse(data); } catch (e) { return; }
     if (!m || typeof m !== 'object') return;
+    if (m.t === 'ping') return send(ws, { t: 'pong', c: m.c });
     if (m.t === 'hello' && !ws.room) {
       const code = String(m.code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
       let room = null, host = false;
