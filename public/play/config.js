@@ -3,4 +3,4 @@
 //   window.APEX_RELAY = "wss://apex-riviera-relay.onrender.com";
 // Leave it empty to use direct peer-to-peer connections instead (no server needed, but some
 // school or work networks block them).
-window.APEX_RELAY = "";
+window.APEX_RELAY = "wss://apex-riviera-relay.onrender.com";
