@@ -3579,7 +3579,10 @@ const Post = (function () {
   let carLight = null;
   let renderer, scene, camera, sun, hemi, sky, skyMat, skyScene, pmrem, envRT, rain, raceLineMesh, worldRoot = null;
   const cfg = { circuit: 'monaco', aiFill: 1, players: 1, mode: 'race', team: 0, laps: 5, grid: 10, aiLevel: 65, weather: 'sun', tyre: 'M', manual: false, tc: 2, abs: true, stab: true, line: true, gfx: 1, voice: 1 };
-  try { const s = JSON.parse(localStorage.getItem('apexRiviera') || '{}'); Object.assign(cfg, s); } catch (e) { }
+  let saved = null; try { saved = localStorage.getItem('apexRiviera'); Object.assign(cfg, JSON.parse(saved || '{}')); } catch (e) { }
+  // first run on a Chromebook or other low-power machine: start on Low graphics
+  const lowEnd = /CrOS/.test(navigator.userAgent) || (navigator.hardwareConcurrency || 8) <= 4 || (navigator.deviceMemory || 8) <= 4;
+  if (!saved && lowEnd) cfg.gfx = 0;
   cfg.players = 1; let menuMode = 'solo';
   const saveCfg = () => { try { localStorage.setItem('apexRiviera', JSON.stringify(cfg)); } catch (e) { } };
   let camMode = 0, lookBack = false, paused = false, muted = false, menuT = 0, exposure = 1, tunnelK = 0, shake = 0;
@@ -3705,9 +3708,19 @@ const Post = (function () {
     document.querySelectorAll('#optCircuit button').forEach(b => b.setAttribute('aria-pressed', b.dataset.v === Track.id ? 'true' : 'false'));
   }
   function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); const rc = $('rainOverlay'); rc.width = w; rc.height = h; if (Post.ok) Post.setSize(w, h, cfg.gfx); }
-  const usePost = () => Post.ok && cfg.gfx >= 1;
+  const usePost = () => Post.ok && cfg.gfx >= 1 && !postOff;
+  // automatic performance: render resolution drops (then the post effects switch off) if the frame rate sags, and recovers when there's headroom
+  let rScale = 1, postOff = false; const perf = { t: 0, n: 0, good: 0, frame: 0 };
+  function perfTick(rawDt) {
+    perf.t += rawDt; perf.n++; perf.frame++;
+    if (cfg.gfx === 0) { renderer.shadowMap.autoUpdate = false; if (perf.frame % 2 === 0) renderer.shadowMap.needsUpdate = true; } else renderer.shadowMap.autoUpdate = true;
+    if (perf.t < 2.5) return; const fps = perf.n / perf.t; perf.t = 0; perf.n = 0;
+    if (Race.state === 'menu' || paused || document.hidden) return;
+    if (fps < 45) { perf.good = 0; if (rScale > 0.6) { rScale = Math.max(0.55, +(rScale - 0.12).toFixed(2)); applyGfx(); } else if (usePost()) { postOff = true; } }
+    else if (fps > 58) { if (++perf.good >= 3 && rScale < 1) { perf.good = 0; rScale = Math.min(1, +(rScale + 0.1).toFixed(2)); applyGfx(); } }
+  }
   function applyGfx() {
-    const q = cfg.gfx; renderer.setPixelRatio(Math.min(devicePixelRatio, q === 2 ? 2 : q === 1 ? 1.5 : 1));
+    const q = cfg.gfx; renderer.setPixelRatio(Math.min(devicePixelRatio, q === 2 ? 2 : q === 1 ? 1.5 : 1) * rScale);
     const sz = q === 2 ? 4096 : q === 1 ? 2048 : 1024; if (sun.shadow.mapSize.x !== sz) { sun.shadow.mapSize.set(sz, sz); if (sun.shadow.map) { sun.shadow.map.dispose(); sun.shadow.map = null; } }
     renderer.shadowMap.enabled = true; World.terrain.receiveShadow = q > 0; resize(); Post.U.grain = q >= 2 ? 0.03 : 0.022;
   }
@@ -3801,7 +3814,7 @@ const Post = (function () {
     segInit('optTyre', 'tyre'); segInit('optBox', 'manual', v => v === 'manual'); segInit('optTc', 'tc', Number);
     segInit('optAssist', 'assist', null, v => { cfg.abs = v !== 'off'; cfg.stab = v === 'full'; saveCfg(); });
     if (!cfg.assist) cfg.assist = 'full';
-    segInit('optLine', 'line', v => v === '1'); segInit('optGfx', 'gfx', Number, () => applyGfx());
+    segInit('optLine', 'line', v => v === '1'); segInit('optGfx', 'gfx', Number, () => { rScale = 1; postOff = false; applyGfx(); });
     segInit('optCam', 'cam', Number, v => { camMode = v; });
     const g = $('optGrid'); g.value = cfg.grid; $('gridVal').textContent = 'P' + cfg.grid; g.oninput = () => { cfg.grid = +g.value; $('gridVal').textContent = 'P' + cfg.grid; saveCfg(); };
     $('goBtn').onclick = () => { if (menuMode === 'online') Net.start(); else startSession(); };
@@ -4368,7 +4381,7 @@ const Post = (function () {
     PadCfg.split = false; Pad.poll(now);
     if (padDlgOpen) { const S = padTarget.state; $('mSteer').style.left = (50 + Math.min(0, S.steer) * 50) + '%'; $('mSteer').style.width = Math.abs(S.steer) * 50 + '%'; $('mThr').style.width = S.throttle * 100 + '%'; $('mBrk').style.width = S.brake * 100 + '%'; }
     if (Pad.state.connected) { padRace(); padMenuNav(); }
-    let dt = Math.min(0.05, (now - last) / 1000); last = now; Env.time += dt;
+    const rawDt = (now - last) / 1000; let dt = Math.min(0.05, rawDt); last = now; Env.time += dt; if (rawDt > 0 && rawDt < 1) perfTick(rawDt);
     Net.update(dt); Voice.tick(dt);
     if (!paused || Race.net) {
       if (Race.state !== 'menu' && Race.cars.length) {
@@ -4419,6 +4432,7 @@ const Post = (function () {
     const t0 = Date.now();
     let nick = ''; try { nick = (localStorage.getItem('apexNick') || '').slice(0, 18); } catch (e) { }
     if (!nick) nick = 'Driver ' + (100 + Math.floor(Math.random() * 900));
+    let lobbyT = 0;
     let race = null, offset = null, pubT = 0, lobT = 0, dirty = true, lastHost = null, joining = false, lastHostCirc = '';
     const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100, r3 = v => Math.round(v * 1000) / 1000;
     const COMP = 'SMHIW';
@@ -4434,10 +4448,19 @@ const Post = (function () {
       const f = (c.drs ? 1 : 0) | (c.brake > 0.2 ? 2 : 0) | (c.lockF ? 4 : 0) | (c.lockR ? 8 : 0) | (c.wheelSpin ? 16 : 0) | (c.retired ? 32 : 0) | (c.finished ? 64 : 0) | (c.pit.mode === 'service' ? 128 : 0) | (c.fwingLost ? 256 : 0) | (c.kerb ? 512 : 0) | (c.pit.mode !== 'none' ? 1024 : 0) | (c.throttle > 0.5 ? 2048 : 0);
       return [r1(c.x), r1(c.z), r1(c.y), r3(c.psi), r1(c.vx), r1(c.vz), r2(c.delta), Math.round(c.rpm / 100), c.gear, f, c.lap, Math.round(c.progress), Math.max(0, COMP.indexOf(c.compound)), r2(c.finishTime || 0), r2(c.bestLap || 0), r2(c.r)];
     }
-    function apply(c, a, at) {
+    // ---- smooth remote cars: snapshot buffer, rendered ~100 ms in the past and interpolated with the sent velocities ----
+    // Each update carries the sender's clock (presence.now). We learn the offset to our clock per sender
+    // (the smallest observed receive-minus-send gap), so uneven packet arrival no longer shows up as jitter.
+    const clk = new Map(); const DELAY = 110;
+    function clockFor(key, sentAt, recvAt) { const g = recvAt - sentAt; let o = clk.get(key); if (o === undefined || g < o) o = g; else o += (g - o) * 0.01; clk.set(key, o); return o; }
+    function apply(c, a, at, sentAt, key) {
       if (!Array.isArray(a) || a.length < 16 || !a.slice(0, 16).every(v => typeof v === 'number' && isFinite(v))) return;
-      if (c.net && c.net.at === at && c.net.x === a[0]) return;
-      c.net = { x: a[0], z: a[1], y: a[2], psi: a[3], vx: a[4], vz: a[5], r: a[15], at: at || Date.now() };
+      const st = typeof sentAt === 'number' && isFinite(sentAt) ? sentAt : at;
+      if (c.net && c.net.st === st) return;
+      const recv = at || Date.now(); const off = clockFor(key || c.netKey, st, recv);
+      c.net = { x: a[0], z: a[1], y: a[2], psi: a[3], vx: a[4], vz: a[5], r: a[15], at: recv, st, key: key || c.netKey };
+      const snaps = c.snaps || (c.snaps = []); if (!snaps.length || st > snaps[snaps.length - 1].t) { snaps.push({ t: st, x: a[0], z: a[1], psi: a[3], vx: a[4], vz: a[5], r: a[15] }); if (snaps.length > 40) snaps.shift(); }
+      c.netOff = off;
       const f = a[9];
       c.delta = a[6]; c.rpm = a[7] * 100; c.gear = clamp(a[8] | 0, 1, 8); c.drs = !!(f & 1); c.brake = f & 2 ? 1 : 0; c.throttle = f & 2048 ? 1 : 0.2;
       c.lockF = !!(f & 4); c.lockR = !!(f & 8); c.wheelSpin = f & 16 ? 1 : 0; c.kerb = f & 512 ? 1 : 0;
@@ -4449,13 +4472,26 @@ const Post = (function () {
       if ((f & 32) && !c.retired) { c.retired = true; c.retireT = 0; c.dnfReason = 'Accident'; }
       if ((f & 64) && !c.finished) { c.finished = true; c.finishTime = a[13]; Race.finishedOrder.push(c); if (!Race.chequered) { Race.chequered = true; if (Race.onChequer) Race.onChequer(c); } }
     }
+    const angD = (a, b) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return d; };
+    function sample(c) {
+      const S = c.snaps; if (!S || !S.length) return null;
+      const T = Date.now() - (c.netOff || 0) - DELAY; // render time in the sender's clock
+      while (S.length > 2 && S[1].t <= T) S.shift();
+      const a = S[0];
+      if (S.length >= 2 && T >= a.t && T <= S[1].t) { // cubic Hermite between two snapshots using their velocities
+        const b = S[1]; const h = (b.t - a.t) / 1000; const u = (T - a.t) / (b.t - a.t); const u2 = u * u, u3 = u2 * u;
+        const h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u, h01 = -2 * u3 + 3 * u2, h11 = u3 - u2;
+        return { x: h00 * a.x + h10 * h * a.vx + h01 * b.x + h11 * h * b.vx, z: h00 * a.z + h10 * h * a.vz + h01 * b.z + h11 * h * b.vz, psi: a.psi + angD(a.psi, b.psi) * u, vx: lerp(a.vx, b.vx, u), vz: lerp(a.vz, b.vz, u), r: lerp(a.r, b.r, u) };
+      }
+      const L = T < a.t ? a : S[S.length - 1]; const ex = clamp((T - L.t) / 1000, 0, 0.35); // before the buffer, or extrapolate briefly past it
+      return { x: L.x + L.vx * ex, z: L.z + L.vz * ex, psi: L.psi + L.r * ex, vx: L.vx, vz: L.vz, r: L.r };
+    }
     function smooth(c, dt) {
       const n = c.net; if (!n) return;
-      const age = clamp((Date.now() - n.at) / 1000 + 0.04, 0, 0.6);
-      const tx = n.x + n.vx * age, tz = n.z + n.vz * age, tp = n.psi + n.r * age;
-      if (Math.hypot(tx - c.x, tz - c.z) > 14) { c.x = tx; c.z = tz; c.psi = tp; }
-      else { const k = Math.min(1, dt * 12); c.x += (tx - c.x) * k; c.z += (tz - c.z) * k; let d = tp - c.psi; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; c.psi += d * k; }
-      c.vx = n.vx; c.vz = n.vz; c.r = n.r;
+      const q = sample(c); if (!q) return;
+      if (Math.hypot(q.x - c.x, q.z - c.z) > 20) { c.x = q.x; c.z = q.z; c.psi = q.psi; }
+      else { const k = Math.min(1, dt * 25); c.x += (q.x - c.x) * k; c.z += (q.z - c.z) * k; c.psi += angD(c.psi, q.psi) * k; }
+      c.vx = q.vx; c.vz = q.vz; c.r = q.r;
       const sn = Math.sin(c.psi), cs = Math.cos(c.psi); c.vxb = c.vx * sn + c.vz * cs; c.vyb = c.vx * cs - c.vz * sn; c.speed = Math.hypot(c.vx, c.vz);
       const pr = Track.project(c.x, c.z, c.ti); c.ti = pr.i; c.s = pr.s; c.d = pr.d; c.y = pr.e; c.sector = c.s < Track.L / 3 ? 0 : c.s < 2 * Track.L / 3 ? 1 : 2;
       if (c.retired) { c.retireT = (c.retireT || 0) + dt; if (c.retireT > 8) c.model.group.visible = false; }
@@ -4504,7 +4540,7 @@ const Post = (function () {
     function attach(r) {
       room = r; ok = true; unsubs.forEach(u => { try { u(); } catch (e) { } }); unsubs = [];
       unsubs.push(room.onConnection(c => { conn = c; if (!c && ok) err = 'Lost the connection to the room. Press Leave, then create or join again.'; renderLobby(); }));
-      unsubs.push(room.onPeers(ch => { peers = ch.peers; renderLobby(); }));
+      unsubs.push(room.onPeers(ch => { peers = ch.peers; if (!Race.net && !$('menu').hidden && !lobbyT) lobbyT = setTimeout(() => { lobbyT = 0; renderLobby(); }, 150); }));
       dirty = true; renderLobby();
       try { const u = new URL(location.href); u.searchParams.set('room', room.code()); history.replaceState(null, '', u.toString()); } catch (e) { }
     }
@@ -4582,17 +4618,17 @@ const Post = (function () {
           const r = hp.race && typeof hp.race === 'object' && Array.isArray(hp.race.grid) ? hp.race : null;
           if (r && (!race || r.rid !== race.rid)) { race = r; if (!Race.net && Race.state === 'menu' && toLocal(r.outAt) > Date.now() - 2000) joinRace(r); }
           else if (r) race = r; else if (!Race.net) race = null;
-          if (Race.net && Array.isArray(hp.ai)) for (const a of hp.ai) { if (!Array.isArray(a)) continue; const g = ghost(a[0]); if (g) apply(g, a.slice(1), h.updatedAt); }
+          if (Race.net && Array.isArray(hp.ai)) for (const a of hp.ai) { if (!Array.isArray(a)) continue; const g = ghost(a[0]); if (g) apply(g, a.slice(1), h.updatedAt, hp.now, h.peer); }
           mirrorHost(h);
         }
         if (hostIsMe && lastHost && lastHost !== h.peer && Race.net && race && race.host !== myKey()) adoptHost();
         lastHost = h ? h.peer : null;
         if (Race.net) {
           const here = new Set(peers.map(p => p.peer));
-          for (const p of peers) { if (p.isMe && p.sameTab) continue; const pr = p.presence; if (!pr || pr.rid !== Race.net.rid || !pr.car) continue; const g = ghost(p.peer); if (g) apply(g, pr.car, p.updatedAt); }
+          for (const p of peers) { if (p.isMe && p.sameTab) continue; const pr = p.presence; if (!pr || pr.rid !== Race.net.rid || !pr.car) continue; const g = ghost(p.peer); if (g) apply(g, pr.car, p.updatedAt, pr.now, p.peer); }
           for (const c of Race.cars) { if (!c.remote) continue; if (c.netKey[0] !== '#' && !here.has(c.netKey) && !c.retired && !c.finished) { c.retired = true; c.retireT = 0; c.dnfReason = 'Left'; if (Race.player) radio(`${c.name} has left the race.`, 'RACE CONTROL', 0); } smooth(c, dt); }
         }
-        pubT -= dt; if (pubT <= 0 || (dirty && pubT < 0.6)) { pubT = Race.net ? 1 / 15 : 1.5; dirty = false; publish(); }
+        pubT -= dt; if (pubT <= 0 || (dirty && pubT < 0.6)) { pubT = Race.net ? 1 / 20 : 1.5; dirty = false; publish(); }
         lobT -= dt; if (lobT <= 0) { lobT = 0.7; if (!$('menu').hidden) renderLobby(); }
       },
       touch() { dirty = true; },
