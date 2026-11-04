@@ -1,0 +1,9 @@
+{
+  "name": "apex-riviera-relay",
+  "version": "1.0.0",
+  "description": "Online race relay for Apex Riviera Real Racing",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
+  "dependencies": { "ws": "^8.18.0" }
+}
