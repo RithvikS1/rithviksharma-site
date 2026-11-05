@@ -3006,7 +3006,7 @@ const SECTOR_BUILD = (function () {
       // town: terraced houses tight against the streets for the first half of the sector
       for (const side of [-1, 1]) for (let s = S.s0 + 20; s < S.s0 + 760; s += 9) {
         if (s > S.s0 + 330 && s < S.s0 + 540 && side === 1) continue; // the piazza
-        const d = side * (Track.wallDist(s, side) + 1.4 + 4.5); const p = Track.pointAt(s, d); const nr = S.near(p.x, p.z); if (nr.d < Track.wallDist(nr.i, 1) + 7) continue;
+        const d = side * (Track.wallDist(s, side) + 1.4 + 4.5); const p = Track.pointAt(s, d); const nr = S.near(p.x, p.z); if (nr.d < Track.wallDist(nr.i, 1) + 5.2) continue;
         const ry = Math.atan2(Track.interp(s).tx, Track.interp(s).tz); const h = 7 + Math.floor(Math.random() * 3) * 3; for (const g of W.house(8.6, h, 9, walls[Math.floor(Math.random() * walls.length)], roofs[Math.floor(Math.random() * 3)], { x: p.x, y: ctx.h(p.x, p.z) - 0.5, z: p.z, ry })) B.add('std', g);
         // shutters
         for (let f = 0; f < h / 3 - 1; f++) for (const o of [-2.4, 0, 2.4]) { const [ox, oz] = W.rot(-side * 4.52, o, ry); B.add('std', box(0.08, 1.4, 0.9, { x: p.x + ox, y: ctx.h(p.x, p.z) + 2 + f * 3, z: p.z + oz, ry }, '#3f6b3f')); }
@@ -3698,7 +3698,7 @@ class Car {
     this._Fyf = 0; this._Fyr = 0; this._af = 0; this._ar = 0; this.contactT = 0; this.wallT = 0; this.lastImpact = 0; this.crashT = 0; this.held = true; this.penalty = 0; this.lift = 0;
   }
   get f() { return [Math.sin(this.psi), Math.cos(this.psi)]; }
-  place(s, d) { const p = Track.pointAt(s, d); const it = Track.interp(s); this.x = p.x; this.z = p.z; this.y = p.y; this.psi = Math.atan2(it.tx, it.tz); this.vx = this.vz = this.r = 0; this.vy = 0; this.air = false; this.bigAir = false; this.airScale = 0; this.ti = Track.idxOf(s); this.s = Track.wrap(s); this.d = d; this.progress = (this.lap - 1) * Track.L + (this.s > Track.L / 2 ? this.s - Track.L : this.s); this.syncModel(0); }
+  place(s, d) { const p = Track.pointAt(s, d); const it = Track.interp(s); this.x = p.x; this.z = p.z; this.y = p.y; this.psi = Math.atan2(it.tx, it.tz); this.vx = this.vz = this.r = 0; this.vy = 0; this.air = false; this.bigAir = false; this.airScale = 0; this.restoreV = 0; this.ti = Track.idxOf(s); this.s = Track.wrap(s); this.d = d; this.progress = (this.lap - 1) * Track.L + (this.s > Track.L / 2 ? this.s - Track.L : this.s); this.syncModel(0); }
   grip() {
     const C = COMPOUNDS[this.compound]; const w = Env.wetness;
     let g = lerp(C.grip, C.wet, w);
@@ -3708,6 +3708,9 @@ class Car {
   }
   physics(dt) {
     if (this.air) { this.airPhysics(dt); return; }
+    // after a big jump: give the speed back over about a second, and stop the moment the driver brakes
+    if (this.restoreV > 0) { this.restoreT += dt; const sn = Math.sin(this.psi), cs = Math.cos(this.psi); const fwd = this.vx * sn + this.vz * cs;
+      if (this.brake > 0.25 || this.restoreT > 1.3 || fwd >= this.restoreV - 0.3) this.restoreV = 0; else { const add = Math.min(this.restoreV - fwd, 16 * dt * Math.min(1, this.restoreT * 3)); this.vx += sn * add; this.vz += cs * add; } }
     const T = Track; const sn = Math.sin(this.psi), cs = Math.cos(this.psi);
     const fx = sn, fz = cs, lx = cs, lz = -sn;
     let vxb = this.vx * fx + this.vz * fz, vyb = this.vx * lx + this.vz * lz; let r = this.r;
@@ -3804,7 +3807,7 @@ class Car {
     const sp = Math.hypot(this.vx, this.vz) || 1; const dec = this.bigAir ? 0 : 0.5 * 1.2 * 1.32 * sp * sp / this.m;
     this.vx -= this.vx / sp * dec * dt; this.vz -= this.vz / sp * dec * dt;
     this.x += this.vx * dt; this.z += this.vz * dt;
-    this.r *= 1 - Math.min(1, 1.2 * dt); this.r += this.delta * 0.35 * dt; this.psi += this.r * dt;
+    this.r *= 1 - Math.min(1, 1.6 * dt); this.r = clamp(this.r + this.delta * 0.12 * dt, -0.35, 0.35); this.psi += this.r * dt;
     const sn = Math.sin(this.psi), cs = Math.cos(this.psi); this.vxb = this.vx * sn + this.vz * cs; this.vyb = this.vx * cs - this.vz * sn; this.speed = Math.hypot(this.vx, this.vz);
     this.rpm = lerp(this.rpm, Math.min(RPM_MAX, RPM_IDLE + this.throttle * 9500), 0.04); this.wheelSpin = 0; this.lockF = this.lockR = false; this.slip = 0;
     this.updateTrack(dt);
@@ -3814,7 +3817,7 @@ class Car {
     if (!dt) { if (!this.air) { this.y = g; this.vy = 0; } return; }
     if (this.air) {
       this.vy -= G_ACC * dt; this.y += this.vy * dt; this.airT += dt;
-      if (this.y <= g) { const imp = -this.vy; this.y = g; this.air = false; this.vy = 0; const big = this.bigAir; if (this.airScale && this.airScale < 1 && !gap) { this.vx /= this.airScale; this.vz /= this.airScale; } this.airScale = 0; this.bigAir = false; if (this.onLand) this.onLand(big ? Math.min(imp, 10) : imp, !!gap, big); }
+      if (this.y <= g) { const imp = -this.vy; this.y = g; this.air = false; this.vy = 0; const big = this.bigAir; if (big && !gap) { const sn = Math.sin(this.psi), cs = Math.cos(this.psi); const fwd = this.vx * sn + this.vz * cs, lat = (this.vx * cs - this.vz * sn) * 0.25; this.vx = sn * fwd + cs * lat; this.vz = cs * fwd - sn * lat; this.r *= 0.25; this.restoreV = Math.min(this.airV0 || 0, fwd / Math.max(0.5, this.airScale || 1)) * 0.92; this.restoreT = 0; } this.airScale = 0; this.bigAir = false; if (this.onLand) this.onLand(big ? Math.min(imp, 10) : imp, !!gap, big); }
     } else {
       const vyG = (g - this.y) / dt;
       if (g < this.y - 0.03 && vyG < this.vy - G_ACC * dt * 1.6) { this.air = true; this.airT = 0;
@@ -3822,7 +3825,7 @@ class Car {
         const J = typeof Tour !== 'undefined' && Tour.jumps ? Tour.jumps.find(j => Math.abs(j.i - pr.i) <= 3) : null;
         if (J && this.vxb > 5) { const H = Math.max(0.5, this.y - T.BASE[Math.min(T.N - 1, J.i + J.gap + 2)]); const v = this.vxb; const nat = v * (this.vy + Math.sqrt(this.vy * this.vy + 2 * G_ACC * H)) / G_ACC;
           if (nat >= J.gap + 1) { const D = clamp(nat, J.gap + 12, J.dMax); const Tt = clamp(D / v, 1.6, 2.1); const sc = Math.min(1, D / Tt / v);
-            this.vy = (G_ACC * Tt * Tt / 2 - H) / Tt; this.airScale = sc; this.vx *= sc; this.vz *= sc; this.bigAir = true; } }
+            this.vy = (G_ACC * Tt * Tt / 2 - H) / Tt; this.airScale = sc; this.airV0 = v; this.vx *= sc; this.vz *= sc; this.bigAir = true; } }
         this.vy -= G_ACC * dt; this.y += this.vy * dt; if (this.onAir) this.onAir(); }
       else { this.vy = Math.abs(vyG) < 60 ? lerp(this.vy, vyG, 0.5) : 0; this.y = g; }
     }
